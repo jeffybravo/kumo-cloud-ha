@@ -1,0 +1,59 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Kumo Cloud account",
+        "description": "Use the same email and password you use in the Kumo Cloud / Comfort app.",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Log in to Kumo Cloud again",
+        "description": "Kumo Cloud rejected the saved password for {username}.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Could not reach Kumo Cloud.",
+      "unknown": "Unexpected error. Check the logs."
+    },
+    "abort": {
+      "already_configured": "This account is already set up.",
+      "reauth_successful": "Logged in again."
+    }
+  },
+  "entity": {
+    "climate": {
+      "kumo": {
+        "state_attributes": {
+          "fan_mode": {
+            "state": {
+              "super_quiet": "Super quiet",
+              "quiet": "Quiet",
+              "low": "Low",
+              "powerful": "Powerful",
+              "super_powerful": "Super powerful",
+              "auto": "Auto"
+            }
+          },
+          "swing_mode": {
+            "state": {
+              "auto": "Auto",
+              "horizontal": "Horizontal",
+              "mid_horizontal": "Mid-horizontal",
+              "midpoint": "Middle",
+              "mid_vertical": "Mid-vertical",
+              "vertical": "Vertical",
+              "swing": "Swing"
+            }
+          }
+        }
+      }
+    }
+  }
+}
