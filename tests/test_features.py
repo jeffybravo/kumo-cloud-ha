@@ -16,6 +16,7 @@ from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.kumo_cloud import const, realtime
+from custom_components.kumo_cloud import coordinator as coordinator_mod
 from custom_components.kumo_cloud.api import BASE_URL
 from custom_components.kumo_cloud.const import (
     COMMAND_REFRESH_DELAY,
@@ -318,6 +319,15 @@ async def test_sensors_skip_missing_values(hass: HomeAssistant, aioclient_mock) 
     assert hass.states.get("binary_sensor.living_room_filter") is None
     assert hass.states.get("sensor.home_outdoor_temperature") is None
     assert hass.states.get(ENTITY).state == HVACMode.HEAT
+
+
+async def test_weather_fetched_right_after_boot(
+    hass: HomeAssistant, cloud, monkeypatch
+) -> None:
+    # monotonic() counts from boot; a fresh machine is well under 15 minutes.
+    monkeypatch.setattr(coordinator_mod, "monotonic", lambda: 30.0)
+    await _setup(hass, realtime=False)
+    assert hass.states.get("sensor.home_outdoor_temperature").state == "-1.5"
 
 
 async def test_weather_refreshed_rarely(hass: HomeAssistant, cloud) -> None:

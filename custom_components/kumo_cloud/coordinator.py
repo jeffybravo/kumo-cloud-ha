@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -27,6 +27,10 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 type KumoConfigEntry = ConfigEntry[KumoCoordinator]
+
+
+def _due(last: float | None, now: float, interval: float) -> bool:
+    return last is None or now - last > interval
 
 
 def _raise_fatal(results: list[Any]) -> None:
@@ -61,9 +65,11 @@ class KumoCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         self.api = api
         self.site_ids: list[str] = []
         self.site_names: dict[str, str] = {}
-        self._sites_fetched_at = 0.0
+        # None = never fetched. Not 0: monotonic() counts from boot, so it can
+        # be small right after a reboot.
+        self._sites_fetched_at: float | None = None
         self.weather: dict[str, dict[str, Any]] = {}
-        self._weather_fetched_at = 0.0
+        self._weather_fetched_at: float | None = None
         # Online/offline from the socket's device_status_v2; absent = unknown.
         self.reachable: dict[str, bool] = {}
         self.realtime: KumoRealtime | None = None
@@ -86,13 +92,13 @@ class KumoCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
 
     async def _fetch(self) -> dict[str, dict[str, Any]]:
         # Re-read the site list now and then so new sites show up without a restart.
-        now = time.monotonic()
-        if not self.site_ids or now - self._sites_fetched_at > SITE_REFRESH_SECONDS:
+        now = monotonic()
+        if _due(self._sites_fetched_at, now, SITE_REFRESH_SECONDS):
             sites = await self.api.get_sites() or []
             self.site_ids = [site["id"] for site in sites]
             self.site_names = {site["id"]: site.get("name") or "" for site in sites}
             self._sites_fetched_at = now
-        if now - self._weather_fetched_at > WEATHER_REFRESH_SECONDS:
+        if _due(self._weather_fetched_at, now, WEATHER_REFRESH_SECONDS):
             await self._fetch_weather()
             self._weather_fetched_at = now
 
