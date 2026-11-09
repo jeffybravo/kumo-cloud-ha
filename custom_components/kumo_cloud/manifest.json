@@ -1,11 +1,16 @@
 {
   "domain": "kumo_cloud",
   "name": "Mitsubishi Kumo Cloud",
-  "codeowners": [],
+  "codeowners": [
+    "@jeffybravo"
+  ],
   "config_flow": true,
-  "documentation": "https://github.com/",
+  "documentation": "https://github.com/jeffybravo/kumo-cloud-ha",
   "integration_type": "hub",
-  "iot_class": "cloud_polling",
-  "requirements": [],
-  "version": "0.1.0"
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/jeffybravo/kumo-cloud-ha/issues",
+  "requirements": [
+    "python-socketio[asyncio_client]==5.18.1"
+  ],
+  "version": "0.2.0"
 }

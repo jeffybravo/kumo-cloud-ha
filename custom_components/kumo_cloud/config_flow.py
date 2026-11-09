@@ -6,13 +6,18 @@ import logging
 from typing import Any
 
 import voluptuous as vol
-
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import KumoAuthError, KumoCloudApi, KumoError
-from .const import DOMAIN
+from .const import CONF_REALTIME, DEFAULT_REALTIME, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,6 +28,11 @@ SCHEMA = vol.Schema(
 
 class KumoCloudConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        return KumoOptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -48,14 +58,15 @@ class KumoCloudConfigFlow(ConfigFlow, domain=DOMAIN):
             else:
                 return self.async_create_entry(
                     title=username,
-                    data={CONF_USERNAME: username, CONF_PASSWORD: user_input[CONF_PASSWORD]},
+                    data={
+                        CONF_USERNAME: username,
+                        CONF_PASSWORD: user_input[CONF_PASSWORD],
+                    },
                 )
 
         return self.async_show_form(step_id="user", data_schema=SCHEMA, errors=errors)
 
-    async def async_step_reauth(
-        self, entry_data: dict[str, Any]
-    ) -> ConfigFlowResult:
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
@@ -75,6 +86,9 @@ class KumoCloudConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except (KumoError, TimeoutError, OSError):
                 errors["base"] = "cannot_connect"
+            except Exception:
+                _LOGGER.exception("Unexpected error logging in to Kumo Cloud")
+                errors["base"] = "unknown"
             else:
                 return self.async_update_reload_and_abort(
                     entry, data_updates={CONF_PASSWORD: user_input[CONF_PASSWORD]}
@@ -85,4 +99,21 @@ class KumoCloudConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
             description_placeholders={"username": entry.data[CONF_USERNAME]},
             errors=errors,
+        )
+
+
+class KumoOptionsFlow(OptionsFlow):
+    """Turn real-time (Socket.IO) updates on or off."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+        current = self.config_entry.options.get(CONF_REALTIME, DEFAULT_REALTIME)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {vol.Required(CONF_REALTIME, default=current): bool}
+            ),
         )

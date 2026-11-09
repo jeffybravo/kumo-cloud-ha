@@ -1,7 +1,7 @@
 """Log in to Kumo Cloud and print each unit, without Home Assistant.
 
-    pip install aiohttp
-    python scripts/check_account.py you@example.com
+pip install aiohttp
+python scripts/check_account.py you@example.com
 """
 
 import asyncio
@@ -20,8 +20,17 @@ _spec = importlib.util.spec_from_file_location(
 api_mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(api_mod)
 
-KEYS = ("operationMode", "roomTemp", "spHeat", "spCool", "spAuto", "fanSpeed",
-        "airDirection", "humidity", "connected")
+KEYS = (
+    "operationMode",
+    "roomTemp",
+    "spHeat",
+    "spCool",
+    "spAuto",
+    "fanSpeed",
+    "airDirection",
+    "humidity",
+    "connected",
+)
 
 
 async def main(username: str) -> None:
@@ -37,8 +46,10 @@ async def main(username: str) -> None:
                 if not serial:
                     continue
                 device = await api.get_device(serial)
-                print(f"  {zone['name']} ({serial}): "
-                      + json.dumps({k: device.get(k) for k in KEYS}))
+                print(
+                    f"  {zone['name']} ({serial}): "
+                    + json.dumps({k: device.get(k) for k in KEYS})
+                )
                 print("    profile: " + json.dumps(await api.get_profile(serial)))
 
 
