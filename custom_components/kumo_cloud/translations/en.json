@@ -54,6 +54,38 @@
           }
         }
       }
+    },
+    "sensor": {
+      "room_temperature": {
+        "name": "Room temperature"
+      },
+      "wifi_signal": {
+        "name": "Wi-Fi signal"
+      },
+      "outdoor_temperature": {
+        "name": "Outdoor temperature"
+      }
+    },
+    "binary_sensor": {
+      "filter": {
+        "name": "Filter"
+      },
+      "defrost": {
+        "name": "Defrost"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Kumo Cloud options",
+        "data": {
+          "realtime": "Real-time updates"
+        },
+        "data_description": {
+          "realtime": "Keep a live connection to Kumo Cloud so changes made on the remote or wall controller show up within seconds. Turn off to use polling only."
+        }
+      }
     }
   }
 }

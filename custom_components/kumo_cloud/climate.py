@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -16,14 +17,15 @@ from homeassistant.components.climate import (
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_call_later
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import const
 from .api import KumoError
-from .const import COMMAND_REFRESH_DELAY, DOMAIN
+from .const import COMMAND_REFRESH_DELAY
 from .coordinator import KumoConfigEntry, KumoCoordinator
+from .entity import KumoEntity, async_add_per_unit
+from .temperature import room_c_to_f, setpoint_c_to_f, setpoint_f_to_c
 
 KUMO_TO_HVAC = {
     "off": HVACMode.OFF,
@@ -75,17 +77,9 @@ async def async_setup_entry(
     entry: KumoConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    coordinator = entry.runtime_data
-    known: set[str] = set()
-
-    @callback
-    def _add_new() -> None:
-        new = [s for s in coordinator.data if s not in known]
-        known.update(new)
-        async_add_entities(KumoClimate(coordinator, s) for s in new)
-
-    _add_new()
-    entry.async_on_unload(coordinator.async_add_listener(_add_new))
+    async_add_per_unit(
+        entry, async_add_entities, lambda c, serial: [KumoClimate(c, serial)]
+    )
 
 
 def _half(value: float) -> float:
@@ -93,26 +87,36 @@ def _half(value: float) -> float:
     return round(value * 2) / 2
 
 
-class KumoClimate(CoordinatorEntity[KumoCoordinator], ClimateEntity):
+class KumoClimate(KumoEntity, ClimateEntity):
     """One Mitsubishi indoor unit."""
 
-    _attr_has_entity_name = True
     _attr_name = None
     _attr_translation_key = "kumo"
-    _attr_temperature_unit = UnitOfTemperature.CELSIUS
-    _attr_target_temperature_step = 0.5
 
     def __init__(self, coordinator: KumoCoordinator, serial: str) -> None:
-        super().__init__(coordinator)
-        self._serial = serial
+        super().__init__(coordinator, serial)
         self._pending: dict[str, Any] = {}
         self._pending_until = 0.0
+        self._queued: dict[str, Any] = {}
+        self._generation = 0
         self._cancel_refresh: CALLBACK_TYPE | None = None
         self._attr_unique_id = serial
 
+        # Fahrenheit users get whole-degree setpoints that map onto the unit's
+        # 0.5 °C steps exactly; see temperature.py.
+        self._fahrenheit = (
+            coordinator.hass.config.units.temperature_unit
+            == UnitOfTemperature.FAHRENHEIT
+        )
+        if self._fahrenheit:
+            self._attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
+            self._attr_target_temperature_step = 1.0
+        else:
+            self._attr_temperature_unit = UnitOfTemperature.CELSIUS
+            self._attr_target_temperature_step = 0.5
+
         profile = coordinator.profiles.get(serial, {})
         self._profile = profile
-        device = coordinator.data[serial]
 
         modes = [HVACMode.OFF, HVACMode.COOL]
         if profile.get("hasModeHeat", True):
@@ -159,22 +163,22 @@ class KumoClimate(CoordinatorEntity[KumoCoordinator], ClimateEntity):
 
         self._base_features = features
 
-        model = device.get("model") or {}
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, serial)},
-            name=device.get("zoneName") or serial,
-            manufacturer="Mitsubishi Electric",
-            model=model.get("materialDescription") or device.get("modelNumber"),
-            model_id=device.get("modelNumber"),
-            serial_number=device.get("serialNumber"),
-        )
-
     # ---- state helpers -------------------------------------------------
 
     def _get(self, key: str) -> Any:
         if key in self._pending and time.monotonic() < self._pending_until:
             return self._pending[key]
-        return self.coordinator.data.get(self._serial, {}).get(key)
+        return self.device.get(key)
+
+    def _show(self, celsius: float | None) -> float | None:
+        """A setpoint in the entity's unit."""
+        if celsius is None or not self._fahrenheit:
+            return celsius
+        return setpoint_c_to_f(celsius)
+
+    def _to_c(self, value: float) -> float:
+        """A requested setpoint, in the entity's unit, as Celsius."""
+        return setpoint_f_to_c(value) if self._fahrenheit else value
 
     @property
     def _mode(self) -> str:
@@ -197,16 +201,14 @@ class KumoClimate(CoordinatorEntity[KumoCoordinator], ClimateEntity):
             return self._base_features | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
         return self._base_features
 
-    @property
-    def available(self) -> bool:
-        device = self.coordinator.data.get(self._serial)
-        return super().available and bool(device) and device.get("connected", True)
-
     # ---- climate properties --------------------------------------------
 
     @property
     def current_temperature(self) -> float | None:
-        return self._get("roomTemp")
+        temp = self._get("roomTemp")
+        if temp is None or not self._fahrenheit:
+            return temp
+        return room_c_to_f(temp)
 
     @property
     def current_humidity(self) -> float | None:
@@ -220,23 +222,23 @@ class KumoClimate(CoordinatorEntity[KumoCoordinator], ClimateEntity):
     def target_temperature(self) -> float | None:
         mode = self._mode
         if mode == "heat":
-            return self._get("spHeat")
+            return self._show(self._get("spHeat"))
         if mode in ("cool", "dry"):
-            return self._get("spCool")
+            return self._show(self._get("spCool"))
         if mode == "auto" and self._single_auto_setpoint:
-            return self._get("spAuto")
+            return self._show(self._get("spAuto"))
         return None
 
     @property
     def target_temperature_low(self) -> float | None:
         if self._mode == "auto" and not self._single_auto_setpoint:
-            return self._get("spHeat")
+            return self._show(self._get("spHeat"))
         return None
 
     @property
     def target_temperature_high(self) -> float | None:
         if self._mode == "auto" and not self._single_auto_setpoint:
-            return self._get("spCool")
+            return self._show(self._get("spCool"))
         return None
 
     @property
@@ -244,14 +246,14 @@ class KumoClimate(CoordinatorEntity[KumoCoordinator], ClimateEntity):
         mode = self._mode
         if mode == "auto" and not self._single_auto_setpoint:
             mode = "heat"
-        return self._limit("minimumSetPoints", mode) or DEFAULT_MIN_TEMP
+        return self._show(self._limit("minimumSetPoints", mode) or DEFAULT_MIN_TEMP)
 
     @property
     def max_temp(self) -> float:
         mode = self._mode
         if mode == "auto" and not self._single_auto_setpoint:
             mode = "cool"
-        return self._limit("maximumSetPoints", mode) or DEFAULT_MAX_TEMP
+        return self._show(self._limit("maximumSetPoints", mode) or DEFAULT_MAX_TEMP)
 
     @property
     def fan_mode(self) -> str | None:
@@ -267,7 +269,7 @@ class KumoClimate(CoordinatorEntity[KumoCoordinator], ClimateEntity):
     def _handle_coordinator_update(self) -> None:
         # Drop optimistic values the cloud has confirmed, so later changes made
         # elsewhere (remote, wall controller) show up straight away.
-        device = self.coordinator.data.get(self._serial) or {}
+        device = self.device
         self._pending = {k: v for k, v in self._pending.items() if device.get(k) != v}
         super()._handle_coordinator_update()
 
@@ -275,16 +277,13 @@ class KumoClimate(CoordinatorEntity[KumoCoordinator], ClimateEntity):
         if self._cancel_refresh:
             self._cancel_refresh()
             self._cancel_refresh = None
+        self._generation += 1  # drop any command still waiting to be sent
         await super().async_will_remove_from_hass()
 
     # ---- commands ------------------------------------------------------
 
-    async def _send(self, commands: dict[str, Any]) -> None:
-        try:
-            await self.coordinator.api.send_command(self._serial, commands)
-        except KumoError as err:
-            raise HomeAssistantError(f"Kumo Cloud rejected the command: {err}") from err
-
+    @callback
+    def _set_optimistic(self, commands: dict[str, Any]) -> None:
         if time.monotonic() >= self._pending_until:
             self._pending = {}
         self._pending.update(commands)
@@ -293,9 +292,39 @@ class KumoClimate(CoordinatorEntity[KumoCoordinator], ClimateEntity):
         self._pending_until = time.monotonic() + OPTIMISTIC_SECONDS
         self.async_write_ha_state()
 
+    async def _send(self, commands: dict[str, Any]) -> None:
+        """Show the change now; send it once calls stop arriving.
+
+        Calls within COMMAND_DEBOUNCE seconds are merged into one request. Only
+        the call that sends waits for the cloud and sees its errors.
+        """
+        self._queued.update(commands)
+        self._set_optimistic(commands)
+        self._generation += 1
+        generation = self._generation
+        await asyncio.sleep(const.COMMAND_DEBOUNCE)
+        if generation != self._generation:
+            return  # superseded; a later call sends the merged commands
+
+        queued, self._queued = self._queued, {}
+        try:
+            await self.coordinator.api.send_command(self._serial, queued)
+        except KumoError as err:
+            for key in queued:
+                self._pending.pop(key, None)
+            if "operationMode" in queued:
+                self._pending.pop("power", None)
+            self.async_write_ha_state()
+            raise HomeAssistantError(f"Kumo Cloud rejected the command: {err}") from err
+
         async def _refresh(_now: Any) -> None:
             self._cancel_refresh = None
-            await self.coordinator.async_request_refresh()
+            realtime = self.coordinator.realtime
+            if realtime and realtime.connected:
+                # The unit pushes its new state over the socket; no REST needed.
+                await realtime.async_request_status(self._serial)
+            else:
+                await self.coordinator.async_request_refresh()
 
         if self._cancel_refresh:
             self._cancel_refresh()
@@ -304,9 +333,10 @@ class KumoClimate(CoordinatorEntity[KumoCoordinator], ClimateEntity):
         )
 
     def _clamp(self, value: float, kind: str) -> float:
+        """A requested setpoint (entity unit) as a valid Celsius command value."""
         low = self._limit("minimumSetPoints", kind) or DEFAULT_MIN_TEMP
         high = self._limit("maximumSetPoints", kind) or DEFAULT_MAX_TEMP
-        return min(max(_half(value), low), high)
+        return min(max(_half(self._to_c(value)), low), high)
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         await self._send({"operationMode": HVAC_TO_KUMO[hvac_mode]})

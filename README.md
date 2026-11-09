@@ -4,13 +4,30 @@ A custom integration that controls Mitsubishi mini splits through the Kumo Cloud
 (Comfort app) **v3** cloud API. Each indoor unit becomes a thermostat entity.
 
 **What it supports:** mode (off / cool / heat / dry / fan / auto), setpoints (dual
-heat/cool range in auto), fan speed, vane direction, room temperature, and humidity.
-Modes, fan speeds, vane options and setpoint limits come from each unit's profile.
+heat/cool range in auto, or a single auto setpoint on units that use one), fan
+speed and vane direction. Modes, fan speeds, vane options and setpoint limits come
+from each unit's profile.
 
-**How it works:** it polls the cloud every 60 s. Each poll costs 1 request per site
-plus 1 per unit, which stays well under the API limit of 50 requests a minute.
-After you send a command, the new value shows right away and the integration
-re-reads the cloud 10 s later.
+**Entities per unit:** the thermostat, plus room temperature, humidity, a filter
+warning and defrost (where the unit reports them), and a Wi-Fi signal sensor
+(diagnostic, disabled by default). Each site also gets an outdoor temperature
+sensor, from the weather report Kumo Cloud provides for its location.
+
+**How it works:** it keeps a live Socket.IO connection to Kumo Cloud, the same
+channel the phone app uses. Changes made on the IR remote, an MHK2 wall controller
+or the app show up within seconds, and the socket reports when a unit goes
+offline. Polling runs underneath as a backstop: every 5 minutes while the socket
+is connected, every 60 s when it isn't. Each poll costs 1 request per site plus
+1 per unit (plus 1 per site for weather every 15 minutes), well under the API
+limit of 50 requests a minute. You can turn the live connection off under
+**Configure** on the integration and use polling only.
+
+**Commands** show in HA right away. Changes made within a second of each other,
+such as tapping the setpoint arrow several times, are sent as one request.
+
+**Fahrenheit:** if HA uses °F, setpoints are whole degrees, and each one maps
+to a 0.5 °C step the unit accepts, so 72 °F stays 72 °F instead of turning
+into 71.6 °F.
 
 ## Install
 
@@ -35,14 +52,19 @@ If something looks wrong in HA, this output helps with debugging.
 ## Known limitations
 
 - **Cloud only.** If the internet or Kumo Cloud is down, you can't control the units.
-- **Changes made elsewhere can lag.** A change made on an MHK2 wall controller or
-  the IR remote may take a while to show up, because the REST API can serve cached
-  values. The fix is the app's Socket.IO real-time channel, which isn't implemented yet.
-- **Reachability is approximate.** When a unit drops off Wi-Fi, the cloud may keep
-  reporting it as connected.
+- **Without the live connection, changes made elsewhere can lag**, because the
+  REST API can serve cached values, and a unit that drops off Wi-Fi may still
+  show as connected.
+- **Outdoor temperature is a weather report**, not a reading from your outdoor unit.
 - **The API is unofficial.** It was reverse-engineered by the community
   (see [ventz/mitsubishi-comfort-api-kumo](https://github.com/ventz/mitsubishi-comfort-api-kumo)),
   so Mitsubishi can change it without notice.
+
+## Reporting a problem
+
+Download diagnostics from **Settings → Devices & services → Mitsubishi Kumo Cloud
+→ ⋮ → Download diagnostics** and attach the file. Your email, password, serial
+numbers and network details are removed from it.
 
 ## Development
 

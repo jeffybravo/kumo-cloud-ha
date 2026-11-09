@@ -104,6 +104,20 @@ class KumoCloudApi:
                 raise KumoError(f"Token refresh failed: {err!r}") from err
         await self.login()
 
+    async def access_token(self, *, refresh: bool = False) -> str:
+        """Return a valid access token for the Socket.IO connection.
+
+        With refresh=True, get a new one first (after the socket was rejected).
+        """
+        async with self._auth_lock:
+            if self._access is None:
+                await self.login()
+            elif refresh:
+                await self._refresh_tokens()
+            if self._access is None:
+                raise KumoAuthError("No access token")
+            return self._access
+
     async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         if self._access is None:
             async with self._auth_lock:
@@ -146,6 +160,10 @@ class KumoCloudApi:
 
     async def get_zones(self, site_id: str) -> list[dict[str, Any]]:
         return await self._request("GET", f"/v3/sites/{site_id}/zones")
+
+    async def get_weather(self, site_id: str) -> dict[str, Any]:
+        """OpenWeatherMap data for the site's location."""
+        return await self._request("GET", f"/v3/sites/{site_id}/weather") or {}
 
     async def get_device(self, serial: str) -> dict[str, Any]:
         return await self._request("GET", f"/v3/devices/{serial}")

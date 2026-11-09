@@ -16,7 +16,6 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
-    MockConfigEntry,
     async_fire_time_changed,
 )
 
@@ -24,116 +23,22 @@ from custom_components.kumo_cloud import async_remove_config_entry_device
 from custom_components.kumo_cloud.api import BASE_URL, KumoAuthError, KumoCloudApi
 from custom_components.kumo_cloud.const import COMMAND_REFRESH_DELAY, DOMAIN
 
-SERIAL = "1234ABCD"
-SERIAL2 = "5678EFGH"
-LOGIN = {"token": {"access": "acc", "refresh": "ref"}, "userId": "u1"}
-
-
-def _zone(serial: str, name: str) -> dict:
-    return {
-        "id": f"z-{serial}",
-        "name": name,
-        "isActive": True,
-        "adapter": {"deviceSerial": serial, "connected": True},
-    }
-
-
-ZONES = [_zone(SERIAL, "Living Room")]
-DEVICE = {
-    "deviceSerial": SERIAL,
-    "power": 1,
-    "operationMode": "heat",
-    "previousOperationMode": "heat",
-    "roomTemp": 20,
-    "humidity": 37,
-    "spCool": 24.5,
-    "spHeat": 18.5,
-    "spAuto": None,
-    "fanSpeed": "auto",
-    "airDirection": "swing",
-    "connected": True,
-    "serialNumber": "UNIT1",
-    "modelNumber": "MSZ-GL12NA",
-}
-PROFILE = [
-    {
-        "hasModeDry": True,
-        "hasModeHeat": True,
-        "hasModeVent": True,
-        "hasVaneDir": True,
-        "hasVaneSwing": True,
-        "hasFanSpeedAuto": True,
-        "numberOfFanSpeeds": 3,
-        "minimumSetPoints": {"cool": 19, "heat": 10, "auto": 19},
-        "maximumSetPoints": {"cool": 30, "heat": 28, "auto": 28},
-    }
-]
-ENTITY = "climate.living_room"
-ENTITY2 = "climate.bedroom"
-
-
-def _mock_cloud(mock, *, zones=None, devices=None, profiles=None) -> None:
-    """(Re)register every cloud endpoint.
-
-    `devices` / `profiles` map serial -> JSON body, or -> an exception to raise.
-    """
-    zones = ZONES if zones is None else zones
-    devices = devices or {SERIAL: DEVICE}
-    profiles = profiles or {}
-    mock.clear_requests()
-    mock.post(f"{BASE_URL}/v3/login", json=LOGIN)
-    mock.get(f"{BASE_URL}/v3/sites", json=[{"id": "s1", "name": "Home"}])
-    mock.get(f"{BASE_URL}/v3/sites/s1/zones", json=zones)
-    for serial, body in devices.items():
-        profile = profiles.get(serial, PROFILE)
-        # Register the longer URL first: the mock matches URL prefixes in order.
-        if isinstance(profile, Exception):
-            mock.get(f"{BASE_URL}/v3/devices/{serial}/profile", exc=profile)
-        else:
-            mock.get(f"{BASE_URL}/v3/devices/{serial}/profile", json=profile)
-        if isinstance(body, Exception):
-            mock.get(f"{BASE_URL}/v3/devices/{serial}", exc=body)
-        else:
-            mock.get(f"{BASE_URL}/v3/devices/{serial}", json=body)
-    mock.post(f"{BASE_URL}/v3/devices/send-command", json={"devices": [SERIAL]})
-
-
-@pytest.fixture
-def cloud(aioclient_mock):
-    _mock_cloud(aioclient_mock)
-    return aioclient_mock
-
-
-async def _setup(hass: HomeAssistant) -> MockConfigEntry:
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        unique_id="me@example.com",
-        data={"username": "me@example.com", "password": "pw"},
-    )
-    entry.add_to_hass(hass)
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    return entry
-
-
-async def _poll(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-    await entry.runtime_data.async_refresh()
-    await hass.async_block_till_done()
-
-
-def _commands(cloud):
-    return [
-        call[2]["commands"]
-        for call in cloud.mock_calls
-        if str(call[1]).endswith("/send-command")
-    ]
-
-
-async def _call(hass: HomeAssistant, service: str, **data) -> None:
-    await hass.services.async_call(
-        "climate", service, {"entity_id": ENTITY, **data}, blocking=True
-    )
-
+from .common import (
+    DEVICE,
+    ENTITY,
+    ENTITY2,
+    LOGIN,
+    PROFILE,
+    SERIAL,
+    SERIAL2,
+    ZONES,
+    _call,
+    _commands,
+    _mock_cloud,
+    _poll,
+    _setup,
+    _zone,
+)
 
 # ---- config flow -------------------------------------------------------
 
@@ -504,7 +409,7 @@ def _device_reads(mock) -> int:
 
 
 async def test_refresh_after_command(hass: HomeAssistant, cloud) -> None:
-    await _setup(hass)
+    await _setup(hass, realtime=False)
     await _call(hass, "set_fan_mode", fan_mode="low")
     before = _device_reads(cloud)
 
