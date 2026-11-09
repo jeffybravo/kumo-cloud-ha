@@ -14,8 +14,8 @@ from homeassistant.components.climate import (
     HVACMode,
 )
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_call_later
@@ -107,6 +107,7 @@ class KumoClimate(CoordinatorEntity[KumoCoordinator], ClimateEntity):
         self._serial = serial
         self._pending: dict[str, Any] = {}
         self._pending_until = 0.0
+        self._cancel_refresh: CALLBACK_TYPE | None = None
         self._attr_unique_id = serial
 
         profile = coordinator.profiles.get(serial, {})
@@ -126,7 +127,6 @@ class KumoClimate(CoordinatorEntity[KumoCoordinator], ClimateEntity):
 
         features = (
             ClimateEntityFeature.TARGET_TEMPERATURE
-            | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
             | ClimateEntityFeature.TURN_ON
             | ClimateEntityFeature.TURN_OFF
         )
@@ -157,7 +157,7 @@ class KumoClimate(CoordinatorEntity[KumoCoordinator], ClimateEntity):
             self._attr_swing_modes = [KUMO_TO_SWING[s] for s in swings]
             features |= ClimateEntityFeature.SWING_MODE
 
-        self._attr_supported_features = features
+        self._base_features = features
 
         model = device.get("model") or {}
         self._attr_device_info = DeviceInfo(
@@ -189,6 +189,13 @@ class KumoClimate(CoordinatorEntity[KumoCoordinator], ClimateEntity):
     def _limit(self, kind: str, mode: str) -> float | None:
         key = "cool" if mode == "dry" else mode
         return (self._profile.get(kind) or {}).get(key)
+
+    @property
+    def supported_features(self) -> ClimateEntityFeature:
+        # Units with one auto setpoint (spAuto) have no heat/cool range.
+        if HVACMode.HEAT_COOL in self.hvac_modes and not self._single_auto_setpoint:
+            return self._base_features | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
+        return self._base_features
 
     @property
     def available(self) -> bool:
@@ -254,6 +261,22 @@ class KumoClimate(CoordinatorEntity[KumoCoordinator], ClimateEntity):
     def swing_mode(self) -> str | None:
         return KUMO_TO_SWING.get(self._get("airDirection"))
 
+    # ---- coordinator / lifecycle ---------------------------------------
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        # Drop optimistic values the cloud has confirmed, so later changes made
+        # elsewhere (remote, wall controller) show up straight away.
+        device = self.coordinator.data.get(self._serial) or {}
+        self._pending = {k: v for k, v in self._pending.items() if device.get(k) != v}
+        super()._handle_coordinator_update()
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._cancel_refresh:
+            self._cancel_refresh()
+            self._cancel_refresh = None
+        await super().async_will_remove_from_hass()
+
     # ---- commands ------------------------------------------------------
 
     async def _send(self, commands: dict[str, Any]) -> None:
@@ -271,9 +294,14 @@ class KumoClimate(CoordinatorEntity[KumoCoordinator], ClimateEntity):
         self.async_write_ha_state()
 
         async def _refresh(_now: Any) -> None:
+            self._cancel_refresh = None
             await self.coordinator.async_request_refresh()
 
-        async_call_later(self.hass, COMMAND_REFRESH_DELAY, _refresh)
+        if self._cancel_refresh:
+            self._cancel_refresh()
+        self._cancel_refresh = async_call_later(
+            self.hass, COMMAND_REFRESH_DELAY, _refresh
+        )
 
     def _clamp(self, value: float, kind: str) -> float:
         low = self._limit("minimumSetPoints", kind) or DEFAULT_MIN_TEMP
@@ -303,6 +331,11 @@ class KumoClimate(CoordinatorEntity[KumoCoordinator], ClimateEntity):
             if mode == "heat":
                 commands["spHeat"] = self._clamp(temp, "heat")
             elif mode == "auto":
+                if not self._single_auto_setpoint:
+                    raise ServiceValidationError(
+                        "This unit uses a heat/cool range in auto mode; "
+                        "set target_temp_low and target_temp_high instead"
+                    )
                 commands["spAuto"] = self._clamp(temp, "auto")
             else:
                 # Cool and dry use the cooling setpoint; for off/fan, pre-set it.

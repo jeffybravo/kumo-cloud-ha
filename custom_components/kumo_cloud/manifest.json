@@ -1,11 +1,12 @@
 {
   "domain": "kumo_cloud",
   "name": "Mitsubishi Kumo Cloud",
-  "codeowners": [],
+  "codeowners": ["@jeffybravo"],
   "config_flow": true,
-  "documentation": "https://github.com/",
+  "documentation": "https://github.com/jeffybravo/kumo-cloud-ha",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/jeffybravo/kumo-cloud-ha/issues",
   "requirements": [],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }

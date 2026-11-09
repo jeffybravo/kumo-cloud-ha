@@ -47,6 +47,10 @@ If something looks wrong in HA, this output helps with debugging.
 ## Development
 
 ```
-pip install pytest-homeassistant-custom-component
+pip install -r requirements_test.txt
+ruff check . && ruff format --check .
 pytest
 ```
+
+CI runs the same checks plus Home Assistant's `hassfest` and the HACS validator.
+`strings.json` and `translations/en.json` must stay identical (a test checks this).

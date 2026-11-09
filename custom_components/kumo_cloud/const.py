@@ -9,3 +9,6 @@ SCAN_INTERVAL = timedelta(seconds=60)
 
 # Wait this long after a command before re-reading state from the cloud.
 COMMAND_REFRESH_DELAY = 10
+
+# Re-read the account's site list this often (seconds).
+SITE_REFRESH_SECONDS = 3600
