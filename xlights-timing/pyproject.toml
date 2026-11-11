@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xlights-timing"
+version = "0.1.0"
+description = "Split a song into instruments and make xLights timing tracks for each"
+requires-python = ">=3.10"
+dependencies = [
+    "demucs>=4.0",
+    "librosa>=0.10",
+    "numpy",
+    "soundfile",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+xlights-timing = "xlights_timing.cli:main"
+
+[tool.setuptools]
+packages = ["xlights_timing"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+extend = "../pyproject.toml"
+
+[tool.ruff.lint.isort]
+known-first-party = ["xlights_timing"]
